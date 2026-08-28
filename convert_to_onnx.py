@@ -8,8 +8,8 @@ from torchvision import datasets, models
 # ==========================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATA_DIR = './chess_classifier/dataset'
-WEIGHTS_PATH = 'chess_piece_resnet18_20260822_100epoch.pth'
-OUTPUT_ONNX_PATH = 'chess_piece_resnet18_20260822_100epoch.onnx'
+WEIGHTS_PATH = 'chess_piece_resnet18_20260828_100epoch.pth'
+OUTPUT_ONNX_PATH = 'chess_piece_resnet18_20260828_100epoch.onnx'
 
 # ==========================================
 # 2. DYNAMICALLY DETECT CLASS COUNT
@@ -32,7 +32,10 @@ model = models.resnet18(weights=None)
 
 # Remap the final layer to your precise class count
 num_features = model.fc.in_features
-model.fc = nn.Linear(num_features, num_classes)
+model.fc = nn.Sequential(
+    nn.Identity(), 
+    nn.Linear(num_features, num_classes)
+)
 
 # Load your custom trained weights
 if not os.path.exists(WEIGHTS_PATH):

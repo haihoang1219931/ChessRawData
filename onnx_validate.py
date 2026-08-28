@@ -7,8 +7,8 @@ from PIL import Image
 # ==========================================
 # 1. SETUP LOGISTICS & CONFIGURATION
 # ==========================================
-ONNX_MODEL_PATH = "chess_piece_resnet18.onnx"
-TARGET_IMAGE = "chess_classifier/dataset/train/gen-Empty/1.jpg"
+ONNX_MODEL_PATH = "chess_piece_resnet18_20260828_100epoch.onnx"
+TARGET_IMAGE = "chess_classifier/dataset/train/gen-Rook/579.jpg"
 
 CLASS_NAMES = [
     "gen-Bishop", "gen-Empty", "gen-King", "gen-Knight", "gen-Pawn", "gen-Queen", "gen-Rook"

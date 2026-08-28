@@ -12,17 +12,19 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # ==========================================
-# 2. DATA AUGMENTATION & PIPELINE
+# 2. DATA AUGMENTATION & PIPELINE (Optimized to fight Overfitting)
 # ==========================================
-# Standard normalization parameters for pre-trained ImageNet models
 IMAGE_NET_MEAN = [0.485, 0.456, 0.406]
 IMAGE_NET_STD = [0.229, 0.224, 0.225]
-IMAGE_SIZE = (240, 240) # ResNet18 expects 240x240 input images
+IMAGE_SIZE = (240, 240)
+
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize(IMAGE_SIZE),
-        transforms.RandomHorizontalFlip(), # Helps model generalize chess piece angles
-        transforms.RandomRotation(15),      # Handles slight board tilts
+        transforms.RandomHorizontalFlip(), 
+        transforms.RandomRotation(15),      
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Handles changing lights
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),             # Handles off-center pieces
         transforms.ToTensor(),
         transforms.Normalize(IMAGE_NET_MEAN, IMAGE_NET_STD)
     ]),
@@ -34,50 +36,62 @@ data_transforms = {
 }
 
 # ==========================================
-# 3. DATA LOADERS SETUP
+# 3. DATA LOADERS SETUP (Optimized for Speed)
 # ==========================================
-DATA_DIR = './chess_classifier/dataset' # Path matching your directory setup
+DATA_DIR = './chess_classifier/dataset' 
 
 image_datasets = {
     x: datasets.ImageFolder(os.path.join(DATA_DIR, x), data_transforms[x])
     for x in ['train', 'val']
 }
 
+# Added pin_memory=True and set shuffle=False for validation to speed up processing
 dataloaders = {
-    x: DataLoader(image_datasets[x], batch_size=32, shuffle=True, num_workers=2)
-    for x in ['train', 'val']
+    'train': DataLoader(image_datasets['train'], batch_size=32, shuffle=True, num_workers=2, pin_memory=True),
+    'val': DataLoader(image_datasets['val'], batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
 }
 
 class_names = image_datasets['train'].classes
 print(f"Detected Classes ({len(class_names)}): {class_names}")
 
 # ==========================================
-# 4. MODEL DEFINTION (TRANSFER LEARNING)
+# 4. MODEL DEFINITION (Added Dropout Layer)
 # ==========================================
-# Load pre-trained weights for state-of-the-art feature extraction
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-
-# Modify the final Fully Connected (fc) layer to output 6 classes instead of 1000
 num_features = model.fc.in_features
-model.fc = nn.Linear(num_features, len(class_names)) 
+
+# Structured with a Dropout layer to force neurons to learn generic features
+model.fc = nn.Sequential(
+    nn.Dropout(p=0.5),
+    nn.Linear(num_features, len(class_names))
+)
 
 model = model.to(device)
 
 # ==========================================
-# 5. LOSS & OPTIMIZER CONFIG
+# 5. LOSS, OPTIMIZER & AMP CONFIG (Added Weight Decay & AMP)
 # ==========================================
-criterion = nn.CrossEntropyLoss() # Standard choice for multi-class classification
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.CrossEntropyLoss()
+# Added weight_decay=1e-4 for L2 regularization
+optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+
+# GradScaler handles floating-point scaling for mixed-precision acceleration
+scaler = torch.cuda.amp.GradScaler(enabled=(device.type == 'cuda'))
 
 # ==========================================
-# 6. TRAINING & VALIDATION LOOP
+# 6. EARLY STOPPING CONFIGURATION
 # ==========================================
 epochs = 100
+patience = 7               # Stops training if val loss doesn't improve for 7 epochs
+patience_counter = 0
+best_val_loss = float('inf')
 
+# ==========================================
+# 7. TRAINING & VALIDATION LOOP
+# ==========================================
 for epoch in range(epochs):
     print(f"\n--- Epoch {epoch + 1}/{epochs} ---")
     
-    # Each epoch has a training and validation phase
     for phase in ['train', 'val']:
         if phase == 'train':
             model.train()
@@ -87,21 +101,23 @@ for epoch in range(epochs):
         running_loss = 0.0
         running_corrects = 0
 
-        # Iterate over batches of images and target labels
         for inputs, labels in dataloaders[phase]:
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
             optimizer.zero_grad()
 
-            # Track gradients only during training phase
             with torch.set_grad_enabled(phase == 'train'):
-                outputs = model(inputs)
-                _, preds = torch.max(outputs, 1)
-                loss = criterion(outputs, labels)
+                # Casts operations to mixed precision when executing on a compatible GPU
+                with torch.cuda.amp.autocast(enabled=(device.type == 'cuda')):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
 
                 if phase == 'train':
-                    loss.backward()
-                    optimizer.step()
+                    # Scale loss and backpropagate
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
 
             running_loss += loss.item() * inputs.size(0)
             running_corrects += torch.sum(preds == labels.data)
@@ -111,8 +127,20 @@ for epoch in range(epochs):
 
         print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
 
-# ==========================================
-# 7. SAVE FINAL WEIGHTS
-# ==========================================
-torch.save(model.state_dict(), 'chess_piece_resnet18.pth')
-print("\nModel saved successfully as 'chess_piece_resnet18.pth'")
+        # Early Stopping check at the end of validation phase
+        if phase == 'val':
+            if epoch_loss < best_val_loss:
+                best_val_loss = epoch_loss
+                patience_counter = 0
+                # Keep tracking and overwrite with the absolute best version
+                torch.save(model.state_dict(), 'chess_piece_resnet18.pth')
+                print("--> Found better weights! Saved to 'chess_piece_resnet18.pth'")
+            else:
+                patience_counter += 1
+                print(f"--> No improvement for {patience_counter} consecutive epoch(s).")
+                
+    if patience_counter >= patience:
+        print(f"\nEarly stopping triggered. Target plateau reached at Epoch {epoch + 1}.")
+        break
+
+print("\nTraining workflow finalized successfully.")
