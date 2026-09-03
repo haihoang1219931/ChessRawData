@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # ==========================================
-# 2. DATA AUGMENTATION & PIPELINE (Optimized to fight Overfitting)
+# 2. DATA AUGMENTATION (Stripped of Color Bias)
 # ==========================================
 IMAGE_NET_MEAN = [0.485, 0.456, 0.406]
 IMAGE_NET_STD = [0.229, 0.224, 0.225]
@@ -22,11 +22,16 @@ data_transforms = {
     'train': transforms.Compose([
         transforms.Resize(IMAGE_SIZE),
         transforms.RandomHorizontalFlip(), 
-        transforms.RandomRotation(15),      
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Handles changing lights
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),             # Handles off-center pieces
+        transforms.RandomVerticalFlip(), # Useful for top-down piece orientation invariance
+        transforms.RandomRotation(180),  # Top-down views can be approached from any angle
+        # High contrast and brightness variations force the model to look at shape contours,
+        # completely ignoring whether the piece is physically black or white wood/plastic.
+        transforms.ColorJitter(brightness=0.4, contrast=0.4), 
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
         transforms.ToTensor(),
-        transforms.Normalize(IMAGE_NET_MEAN, IMAGE_NET_STD)
+        transforms.Normalize(IMAGE_NET_MEAN, IMAGE_NET_STD),
+        # RandomErasing cuts into the circular mass, forcing edge verification
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.12), ratio=(0.3, 3.3))
     ]),
     'val': transforms.Compose([
         transforms.Resize(IMAGE_SIZE),
@@ -36,7 +41,7 @@ data_transforms = {
 }
 
 # ==========================================
-# 3. DATA LOADERS SETUP (Optimized for Speed)
+# 3. DATA LOADERS SETUP
 # ==========================================
 DATA_DIR = './chess_classifier/dataset' 
 
@@ -45,22 +50,28 @@ image_datasets = {
     for x in ['train', 'val']
 }
 
-# Added pin_memory=True and set shuffle=False for validation to speed up processing
 dataloaders = {
     'train': DataLoader(image_datasets['train'], batch_size=32, shuffle=True, num_workers=2, pin_memory=True),
     'val': DataLoader(image_datasets['val'], batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
 }
 
 class_names = image_datasets['train'].classes
-print(f"Detected Classes ({len(class_names)}): {class_names}")
+print(f"Detected Type Classes ({len(class_names)}): {class_names}")
 
 # ==========================================
-# 4. MODEL DEFINITION (Added Dropout Layer)
+# 4. MODEL DEFINITION (Fine-Tuning Deep Layers)
 # ==========================================
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-num_features = model.fc.in_features
 
-# Structured with a Dropout layer to force neurons to learn generic features
+# Freeze all early layers to keep basic geometric edge detectors
+for param in model.parameters():
+    param.requires_grad = False
+
+# Unfreeze layer4 to let ResNet specialize on the fine cuts of your specific pieces
+for param in model.layer4.parameters():
+    param.requires_grad = True
+
+num_features = model.fc.in_features
 model.fc = nn.Sequential(
     nn.Dropout(p=0.5),
     nn.Linear(num_features, len(class_names))
@@ -69,20 +80,30 @@ model.fc = nn.Sequential(
 model = model.to(device)
 
 # ==========================================
-# 5. LOSS, OPTIMIZER & AMP CONFIG (Added Weight Decay & AMP)
+# 5. TARGETED LOSS WEIGHTS & SPEED OPTIMIZER
 # ==========================================
-criterion = nn.CrossEntropyLoss()
-# Added weight_decay=1e-4 for L2 regularization
-optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+class_weights = torch.ones(len(class_names), dtype=torch.float)
+for idx, name in enumerate(class_names):
+    normalized_name = name.lower()
+    if 'bishop' in normalized_name:
+        class_weights[idx] = 3.0  # Extra high penalty since color isn't a distinguishing factor
+    elif 'pawn' in normalized_name:
+        class_weights[idx] = 1.8  # Heightened penalty to avoid lazy classification shortcuts
 
-# GradScaler handles floating-point scaling for mixed-precision acceleration
+class_weights = class_weights.to(device)
+criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+# Track only trainable blocks
+trainable_params = [p for p in model.parameters() if p.requires_grad]
+optimizer = optim.Adam(trainable_params, lr=0.0001, weight_decay=1e-4)
+
 scaler = torch.cuda.amp.GradScaler(enabled=(device.type == 'cuda'))
 
 # ==========================================
 # 6. EARLY STOPPING CONFIGURATION
 # ==========================================
 epochs = 100
-patience = 7               # Stops training if val loss doesn't improve for 7 epochs
+patience = 7               
 patience_counter = 0
 best_val_loss = float('inf')
 
@@ -107,14 +128,12 @@ for epoch in range(epochs):
             optimizer.zero_grad()
 
             with torch.set_grad_enabled(phase == 'train'):
-                # Casts operations to mixed precision when executing on a compatible GPU
                 with torch.cuda.amp.autocast(enabled=(device.type == 'cuda')):
                     outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
                     loss = criterion(outputs, labels)
 
                 if phase == 'train':
-                    # Scale loss and backpropagate
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
@@ -127,12 +146,10 @@ for epoch in range(epochs):
 
         print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
 
-        # Early Stopping check at the end of validation phase
         if phase == 'val':
             if epoch_loss < best_val_loss:
                 best_val_loss = epoch_loss
                 patience_counter = 0
-                # Keep tracking and overwrite with the absolute best version
                 torch.save(model.state_dict(), 'chess_piece_resnet18.pth')
                 print("--> Found better weights! Saved to 'chess_piece_resnet18.pth'")
             else:
@@ -143,4 +160,4 @@ for epoch in range(epochs):
         print(f"\nEarly stopping triggered. Target plateau reached at Epoch {epoch + 1}.")
         break
 
-print("\nTraining workflow finalized successfully.")
+print("\nType-only training workflow finalized successfully.")
