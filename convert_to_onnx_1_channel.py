@@ -36,17 +36,17 @@ onnx_model.fc = nn.Sequential(
 )
 
 # 2. Load the best weights saved during training
-weights_path = 'chess_piece_resnet18_20260909_1_channel_120x120.pth'
+weights_path = 'chess_piece_resnet18_20260909_1_channel_64x64_2.pth'
 onnx_model.load_state_dict(torch.load(weights_path, map_location=device))
 onnx_model = onnx_model.to(device)
 onnx_model.eval() # Always set to evaluation mode before exporting
 
 # 3. Create a dummy input tensor matching your new parameters: 
-# (Batch Size = 1, Channels = 1, Height = 120, Width = 120)
-dummy_input = torch.randn(1, 1, 120, 120, device=device)
+# (Batch Size = 1, Channels = 1, Height = 64, Width = 64)
+dummy_input = torch.randn(1, 1, 64, 64, device=device)
 
 # 4. Execute the ONNX export
-onnx_filename = 'chess_piece_resnet18_20260909_1_channel_120x120.onnx'
+onnx_filename = 'chess_piece_resnet18_20260909_1_channel_64x64_2.onnx'
 torch.onnx.export(
     onnx_model,                  # The trained PyTorch model
     dummy_input,                 # Sample input tensor with correct dimensions

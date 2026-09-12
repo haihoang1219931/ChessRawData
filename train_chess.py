@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
+from torchvision.transforms import InterpolationMode 
 
 # ==========================================
 # 1. HARDWARE SELECTION
@@ -16,25 +17,25 @@ print(f"Using device: {device}")
 # ==========================================
 IMAGE_NET_MEAN = [0.485, 0.456, 0.406]
 IMAGE_NET_STD = [0.229, 0.224, 0.225]
-IMAGE_SIZE = (240, 240)
+IMAGE_SIZE = (128, 128)
 
 data_transforms = {
     'train': transforms.Compose([
-        transforms.Resize(IMAGE_SIZE),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3), 
+        transforms.RandomAdjustSharpness(sharpness_factor=2.0, p=0.5),
+        transforms.Resize(IMAGE_SIZE, interpolation=InterpolationMode.NEAREST),
+        transforms.RandomPerspective(distortion_scale=0.3, p=0.5, fill=0),
         transforms.RandomHorizontalFlip(), 
-        transforms.RandomVerticalFlip(), # Useful for top-down piece orientation invariance
-        transforms.RandomRotation(180),  # Top-down views can be approached from any angle
-        # High contrast and brightness variations force the model to look at shape contours,
-        # completely ignoring whether the piece is physically black or white wood/plastic.
-        transforms.ColorJitter(brightness=0.4, contrast=0.4), 
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+        transforms.RandomVerticalFlip(), 
+        transforms.RandomRotation(180),  
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2)),         
+        # 7. Convert to mathematical tensor matrices and normalize
         transforms.ToTensor(),
-        transforms.Normalize(IMAGE_NET_MEAN, IMAGE_NET_STD),
-        # RandomErasing cuts into the circular mass, forcing edge verification
-        transforms.RandomErasing(p=0.25, scale=(0.02, 0.12), ratio=(0.3, 3.3))
+        transforms.Normalize(IMAGE_NET_MEAN, IMAGE_NET_STD)
     ]),
     'val': transforms.Compose([
-        transforms.Resize(IMAGE_SIZE),
+        # Validation must perfectly mirror the channel structure, scale, and interpolation method
+        transforms.Resize(IMAGE_SIZE, interpolation=InterpolationMode.NEAREST),
         transforms.ToTensor(),
         transforms.Normalize(IMAGE_NET_MEAN, IMAGE_NET_STD)
     ]),
@@ -95,7 +96,7 @@ criterion = nn.CrossEntropyLoss(weight=class_weights)
 
 # Track only trainable blocks
 trainable_params = [p for p in model.parameters() if p.requires_grad]
-optimizer = optim.Adam(trainable_params, lr=0.0001, weight_decay=1e-4)
+optimizer = optim.Adam(trainable_params, lr=0.00001, weight_decay=1e-4)
 
 scaler = torch.cuda.amp.GradScaler(enabled=(device.type == 'cuda'))
 
@@ -103,7 +104,7 @@ scaler = torch.cuda.amp.GradScaler(enabled=(device.type == 'cuda'))
 # 6. EARLY STOPPING CONFIGURATION
 # ==========================================
 epochs = 100
-patience = 7               
+patience = 20               
 patience_counter = 0
 best_val_loss = float('inf')
 
@@ -150,8 +151,8 @@ for epoch in range(epochs):
             if epoch_loss < best_val_loss:
                 best_val_loss = epoch_loss
                 patience_counter = 0
-                torch.save(model.state_dict(), 'chess_piece_resnet18.pth')
-                print("--> Found better weights! Saved to 'chess_piece_resnet18.pth'")
+                torch.save(model.state_dict(), 'chess_piece_resnet18_20260910_3_channel_128x128_2.pth')
+                print("--> Found better weights! Saved to 'chess_piece_resnet18_20260910_3_channel_128x128_2.pth'")
             else:
                 patience_counter += 1
                 print(f"--> No improvement for {patience_counter} consecutive epoch(s).")

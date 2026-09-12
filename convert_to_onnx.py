@@ -8,8 +8,8 @@ from torchvision import datasets, models
 # ==========================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATA_DIR = './chess_classifier/dataset'
-WEIGHTS_PATH = 'chess_piece_resnet18_20260903_100epoch.pth'
-OUTPUT_ONNX_PATH = 'chess_piece_resnet18_20260903_100epoch.onnx'
+WEIGHTS_PATH = 'chess_piece_resnet18_20260910_3_channel_128x128_2.pth'
+OUTPUT_ONNX_PATH = 'chess_piece_resnet18_20260910_3_channel_128x128_2.onnx'
 
 # ==========================================
 # 2. DYNAMICALLY DETECT CLASS COUNT
