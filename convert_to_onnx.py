@@ -8,8 +8,8 @@ from torchvision import datasets, models
 # ==========================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATA_DIR = './chess_classifier/dataset'
-WEIGHTS_PATH = 'chess_piece_resnet18_20260910_3_channel_128x128_2.pth'
-OUTPUT_ONNX_PATH = 'chess_piece_resnet18_20260910_3_channel_128x128_2.onnx'
+WEIGHTS_PATH = 'chess_piece_resnet18_20260917_32x32_3channels.pth'
+OUTPUT_ONNX_PATH = 'chess_piece_resnet18_20260917_32x32_3channels.onnx'
 
 # ==========================================
 # 2. DYNAMICALLY DETECT CLASS COUNT
@@ -54,7 +54,7 @@ print("Model architecture matched and weights loaded successfully.")
 # ==========================================
 # Create a dummy image matrix matching your training input shape: 
 # [Batch size: 1, Channels: 3, Height: 240, Width: 240]
-dummy_input = torch.randn(1, 3, 240, 240).to(device)
+dummy_input = torch.randn(1, 3, 32, 32).to(device)
 
 print(f"Exporting model to ONNX format at '{OUTPUT_ONNX_PATH}'...")
 

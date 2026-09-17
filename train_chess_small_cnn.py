@@ -115,13 +115,26 @@ scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
 
 
 # ==========================================
-# 6. EARLY STOPPING CONFIGURATION
+# 6. EARLY STOPPING & RESUME CONFIGURATION
 # ==========================================
 epochs = 50                 
 patience = 10               
 patience_counter = 0
 best_val_loss = float('inf')
 best_weights_path = 'mini_resnet_chess_64x64.pth'
+
+# Check for existing checkpoint weights to continue training
+if os.path.exists(best_weights_path):
+    print(f"\nFound existing weights at '{best_weights_path}'. Loading checkpoint for resume training...")
+    try:
+        # map_location ensures safety if switching between CPU and GPU environments
+        model.load_state_dict(torch.load(best_weights_path, map_location=device))
+        print("--> Weights successfully restored! Continuing from previous best validation state.")
+    except Exception as e:
+        print(f"--> Error loading weights: {e}. Starting training from scratch with pre-trained ResNet18 defaults.")
+else:
+    print(f"\nNo previous weight file found at '{best_weights_path}'. Starting training from scratch.")
+
 
 # ==========================================
 # 7. TRAINING & VALIDATION LOOP
