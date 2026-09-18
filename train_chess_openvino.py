@@ -129,11 +129,11 @@ scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
 # ==========================================
 # 6. EARLY STOPPING CONFIGURATION
 # ==========================================
-epochs = 50                 # Reduced because single-layer head adjustments converge fast
-patience = 10               
+epochs = 1000                 # Reduced because single-layer head adjustments converge fast
+patience = 100               
 patience_counter = 0
 best_val_loss = float('inf')
-best_weights_path = 'mini_resnet_chess_240x240_20260917.pth'
+best_weights_path = 'mini_resnet_chess_240x240_vino_20260918.pth'
 
 # ==========================================
 # 7. TRAINING & VALIDATION LOOP
@@ -200,7 +200,7 @@ model.eval()
 # ⚡ HARD SPEED FIX: Dynamic axes completely removed! 
 # We target a hard static shape of [1, 3, 240, 240] so OpenVINO can fully serialize memory jumps.
 dummy_input = torch.randn(1, 3, 240, 240).to(device)
-onnx_filename = "mini_resnet_chess_240x240_20260917.onnx"
+onnx_filename = "mini_resnet_chess_240x240_vino_20260918.onnx"
 
 torch.onnx.export(
     model, 
